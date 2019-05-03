@@ -4,6 +4,7 @@ const fs = require('fs');
 const glob = require('glob');
 const moment = require('moment');
 const suncalc = require('suncalc');
+const { spawn } = require('child_process');
 
 /**
  * get the suncalc times
@@ -76,21 +77,84 @@ function fixMonth( month ) {
  * @param {number} minSec date in mmss
  * @param {array} files array of files to filter down
  */
-function filterFiles( min = true, monthDayHour, minSec, files ) {
-  minSec = ( Math.floor( minSec / 100 ) * 100 ) + ( min ? 0 : 100 );
+function filterFiles( minMonthDayHour, maxMonthDayHour, minMinuteSecond, maxMinuteSecond, files ) {
+  minMonthDayHour = Number( minMonthDayHour );
+  maxMonthDayHour = Number( maxMonthDayHour );
+  minMinuteSecond = Math.floor( Number( minMinuteSecond ) / 100 ) * 100;
+  maxMinuteSecond = Math.floor( Number( maxMinuteSecond ) / 100 ) * 100 + 100;
+
   return files.filter( x => {
-    const [ hourFolder, fileName ] = x.replace('.jpg', '' ).split( path.sep );
-    if( min ) {
-      return Number( hourFolder ) >= Number( monthDayHour ) && Number( fileName ) >= Number( minSec );
-    } else {
-      return Number( hourFolder ) <= Number( monthDayHour ) && Number( fileName ) <= Number( minSec );
+    const [ yearFolder, hourFolder, fileName ] = x.replace('.jpg', '' ).split( path.sep );
+
+    if( Number( hourFolder ) > minMonthDayHour && Number( hourFolder ) < maxMonthDayHour ) {
+      return true;
+    } else
+    if( Number ( hourFolder ) === minMonthDayHour && Number( fileName ) >= minMinuteSecond ) {
+      return true;
     }
+    if( Number ( hourFolder ) === maxMonthDayHour && Number( fileName ) <= maxMinuteSecond ) {
+      return true;
+    }
+
+    return false;
   });
 }
 
+/**
+ * generate the mp4 video
+ */
+function makemp4( movPath, listPath ) {
+  return new Promise( async ( resolve, reject ) => {
+
+    // try {
+    //   ffmpeg( listPath )
+    //     .inputOption(['-f concat'])
+    //     .videoCodec('libx264')
+    //     .outputFormat('mp4')
+    //     .on( 'error', reject )
+    //     .on( 'done', resolve )
+    //     .on( 'end', resolve )
+    //     .save( movPath );
+    // } catch( error ) {
+    //   console.error( error );
+    //   reject( error );
+    // }
+
+    const cmd = process.env.ffmpegpath || 'ffmpeg';
+
+    const args = [
+      '-y',
+      '-r', '10',
+      '-f', 'concat',
+      '-safe', '0',
+      '-i', listPath,
+      '-c:v', 'libx264',
+      // '-vf', '"format=yuv420p"',
+      movPath
+    ]
+
+    const proc = spawn( cmd, args );
+
+    proc.stdout.on('data', data => {
+      console.log( data.toString() );
+    })
+    proc.stderr.on('data', data => {
+      console.log( data.toString() );
+    })
+
+    proc.on('close', () => {
+      resolve();
+    })
+
+  });
+}
+// this worked
+//  ffmpeg -y -r 1 -f concat -safe 0 -i 0401.txt -c:v libx264 -vf "fps=24,format=yuv420p" 0401.mp4
+
+
 ( async() => {
 
-  const filesList = [];
+  let filesList = [];
 
   let error, dawn, dusk, files;
 
@@ -104,27 +168,30 @@ function filterFiles( min = true, monthDayHour, minSec, files ) {
   console.log( 'dusk', path.join( maxYear, fixMonth( maxMonth ) + maxDay + maxHour, maxFileName ) );
 
   [ error, files ] = await getFiles( fixMonth( minMonth ) + minDay + '**' + path.sep + '*.jpg', { cwd: path.join( process.env.webcamCache, process.env.cameraGUID, minYear ) })
-  files = filterFiles( true, fixMonth( minMonth ) + minDay + minHour, minFileName, files );
   files.forEach( file => {
-    filesList.push( path.join( process.env.webcamCache, process.env.cameraGUID, file ) );
+    filesList.push( path.join( minYear, file ) );
+  });
+  
+  [ error, files ] = await getFiles( fixMonth( maxMonth ) + maxDay + '**' + path.sep + '*.jpg', { cwd: path.join( process.env.webcamCache, process.env.cameraGUID, maxYear ) })
+  files.forEach( file => {
+    filesList.push( path.join( maxYear, file ) );
   });
 
-  [ error, files ] = await getFiles( fixMonth( maxMonth ) + maxDay + '**' + path.sep + '*.jpg', { cwd: path.join( process.env.webcamCache, process.env.cameraGUID, maxYear ) })
-  files = filterFiles( false, fixMonth( maxMonth ) + maxDay + maxHour, maxFileName, files );
-  files.forEach( file => {
-    filesList.push( path.join( process.env.webcamCache, process.env.cameraGUID, file ) );
-  });
+  filesList = filterFiles( fixMonth( minMonth ) + minDay + minHour, fixMonth( maxMonth ) + maxDay + maxHour, minFileName, maxFileName, filesList );
 
   console.log( 'total files', filesList.length );
 
-  const txt = fs.createWriteStream( path.join( process.env.webcamCache, process.env.cameraGUID, maxYear, 'temp', fixMonth( maxMonth ) + maxDay + '.txt' ) );
+  const listPath = path.join( process.env.webcamCache, process.env.cameraGUID, maxYear, 'temp', fixMonth( maxMonth ) + maxDay + '.txt' );
+  const movPath = path.join( process.env.webcamCache, process.env.cameraGUID, maxYear, 'temp', fixMonth( maxMonth ) + maxDay + '.mp4' );
+
+  const txt = fs.createWriteStream( listPath );
   filesList.sort().forEach( file => {
-    txt.write( "file '" + file + "'\r\n" );
+    txt.write( "file '" + path.join( process.env.webcamCache, process.env.cameraGUID, file ) + "'\r\n" );
   });
   txt.close();
 
+  await makemp4( movPath, listPath )
+
+  console.log( 'done' );
+
 })();
-
-// this worked
-//  ffmpeg -y -r 1 -f concat -safe 0 -i 0401.txt -c:v libx264 -vf "fps=24,format=yuv420p" 0401.mp4
-
