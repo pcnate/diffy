@@ -9,7 +9,9 @@
     "jpg-stream": "^1.1.2",
     "png-file-stream": "^1.2.1"
   },
-  "devDependencies": {},
+  "devDependencies": {
+    "npm-nomaster-commits": "*"
+  },
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "start": "node server.js"
