@@ -2,29 +2,30 @@ require('dotenv').config();
 const path = require('path');
 const fs = require('fs');
 const glob = require('glob');
-const os = require('os');
 const moment = require('moment');
-
 const suncalc = require('suncalc');
 
-// const times = suncalc.getTimes( new Date(), process.env.latitude, process.env.longitude );
-
-// Object.keys( times ).forEach( timeKey => {
-//   console.log([ timeKey, moment( times[ timeKey ] ).utc().format('YYYY/MMDDHH/mmss'), moment( times[ timeKey ] ).utcOffset( moment().utcOffset() ).format('YYYY/MMDDHH/mmss') ]);
-// })
-
-// console.log( times );
-
+/**
+ * get the suncalc times
+ */
 function getTimes() {
   return new Promise( async resolve => {
     try {
-      resolve([ false, suncalc.getTimes( new Date(), process.env.latitude, process.env.longitude ) ]);
+      const dt = new Date();
+      dt.setHours( dt.getHours() + Number( process.env.hoursOffset || 0 ) )
+      resolve([ false, suncalc.getTimes( dt, process.env.latitude, process.env.longitude ) ]);
     } catch( error ) {
       resolve([ error, {} ]);
     }
   });
 }
 
+/**
+ * get the time and format it
+ *
+ * @param {string} timeKey dusk|dawn|etc
+ * @param {string} format momentjs format
+ */
 function getTime( timeKey, format ) {
   return new Promise( async resolve => {
     const [ error, times ] = await getTimes();
@@ -38,6 +39,12 @@ function getTime( timeKey, format ) {
   });
 }
 
+/**
+ * get the list of files that match the glob pattern and options
+ *
+ * @param {string} pattern glob pattern
+ * @param {object} options glob options
+ */
 function getFiles( pattern, options ) {
   return new Promise( async resolve => {
     try {
@@ -52,10 +59,23 @@ function getFiles( pattern, options ) {
   });
 }
 
+/**
+ * subtract 1 from the month to batch the images that are off by 1 month
+ *
+ * @param {number} month
+ */
 function fixMonth( month ) {
   return ( Number( month ) - 1 ).toString().padStart( 2, '0' )
 }
 
+/**
+ * filter the list to only include images taken between the start and end time
+ *
+ * @param {boolean} min whether this is the minimum or the maximum date
+ * @param {number} monthDayHour date in MMDDHH
+ * @param {number} minSec date in mmss
+ * @param {array} files array of files to filter down
+ */
 function filterFiles( min = true, monthDayHour, minSec, files ) {
   minSec = ( Math.floor( minSec / 100 ) * 100 ) + ( min ? 0 : 100 );
   return files.filter( x => {
@@ -95,7 +115,9 @@ function filterFiles( min = true, monthDayHour, minSec, files ) {
     filesList.push( path.join( process.env.webcamCache, process.env.cameraGUID, file ) );
   });
 
-  const txt = fs.createWriteStream( path.join( process.env.webcamCache, process.env.cameraGUID, maxYear, fixMonth( maxMonth ) + maxDay + '.txt' ) );
+  console.log( 'total files', filesList.length );
+
+  const txt = fs.createWriteStream( path.join( process.env.webcamCache, process.env.cameraGUID, maxYear, 'temp', fixMonth( maxMonth ) + maxDay + '.txt' ) );
   filesList.sort().forEach( file => {
     txt.write( "file '" + file + "'\r\n" );
   });
@@ -103,39 +125,6 @@ function filterFiles( min = true, monthDayHour, minSec, files ) {
 
 })();
 
-
-const folder = path.join( process.env.webcamCache, process.env.cameraGUID, '2019' );
-
-const globOptions = {
-  cwd: [ ...folder.split( path.sep ) ].join( path.sep ),
-}
-
-// const txt = fs.createWriteStream( '/home/pcnate/Documents/0401.txt', 'utf8' );
-// // fs.writeFileSync( '/home/pcnate/Documents/0401.txt' )
-// glob( '0401**/*.jpg', globOptions, async( err, files ) => {
-//   // console.log( files );
-
-//   files.forEach( async file => {
-//     txt.write( "file '" + path.join( folder, file ) + "'\r\n" );
-//   });
-
-//   txt.close();
-// })
-
+// this worked
 //  ffmpeg -y -r 1 -f concat -safe 0 -i 0401.txt -c:v libx264 -vf "fps=24,format=yuv420p" 0401.mp4
 
-
-// fs.readdir( folder, ( err, files ) => {
-//   if( err ) {
-//     console.error( 'error reading', folder );
-//     console.error( err );
-//     return;
-//   }
-
-//   files.forEach( file => {
-//     if( file.indexOf( '0401') === 0 ) {
-//       console.log( file );
-//     }
-//   })
-
-// })
