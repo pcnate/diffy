@@ -1,6 +1,7 @@
 require('dotenv').config();
 const path = require('path');
-const fs = require('fs');
+const os = require('os');
+const fs = require('fs-extra');
 const glob = require('glob');
 const moment = require('moment');
 const suncalc = require('suncalc');
@@ -50,23 +51,20 @@ function getFiles( pattern, options ) {
   return new Promise( async resolve => {
     try {
 
-      glob( pattern, options, async ( err, files ) => {
-        resolve([ err, files ])
-      })
+      if ( fs.exists( options.cwd ) ) {
+
+        glob( pattern, options, async ( err, files ) => {
+          resolve([ err, files ])
+        })
+
+      } else {
+        resolve([ false, [] ]);
+      }
 
     } catch( error ) {
       resolve([ error, [] ]);
     }
   });
-}
-
-/**
- * subtract 1 from the month to batch the images that are off by 1 month
- *
- * @param {number} month
- */
-function fixMonth( month ) {
-  return ( Number( month ) - 1 ).toString().padStart( 2, '0' )
 }
 
 /**
@@ -122,9 +120,11 @@ function makemp4( movPath, listPath ) {
 
     const cmd = process.env.ffmpegpath || 'ffmpeg';
 
+    // this worked
+    //  ffmpeg -y -r 1 -f concat -safe 0 -i 0401.txt -c:v libx264 -vf "fps=24,format=yuv420p" 0401.mp4
     const args = [
       '-y',
-      '-r', '10',
+      '-r', process.env.framerate || 10,
       '-f', 'concat',
       '-safe', '0',
       '-i', listPath,
@@ -148,15 +148,98 @@ function makemp4( movPath, listPath ) {
 
   });
 }
-// this worked
-//  ffmpeg -y -r 1 -f concat -safe 0 -i 0401.txt -c:v libx264 -vf "fps=24,format=yuv420p" 0401.mp4
 
+
+/**
+ * find all image files for a camera and generate the video
+ *
+ * @param {string} cameraGUID
+ * @param {string} dawn timestamp in `YYYY MM DD HH mmss`
+ * @param {string} dusk timestamp in `YYYY MM DD HH mmss`
+ */
+function processCamera( cameraGUID = '', dawn = '', dusk = '' ) {
+  return new Promise( async resolve => {
+
+    if( cameraGUID === '' || dawn === '' || dusk === '' ) {
+      resolve( false );
+      return;
+    }
+
+    console.log( 'processing camera', cameraGUID );
+
+    let filesList = [];
+
+    let error, files;
+
+    const [ minYear, minMonth, minDay, minHour, minFileName ] = dawn.split(' ');
+    const [ maxYear, maxMonth, maxDay, maxHour, maxFileName ] = dusk.split(' ');
+
+    [ error, files ] = await getFiles( minMonth + minDay + '**' + path.sep + '*.jpg', { cwd: path.join( process.env.webcamCache, cameraGUID, minYear ) })
+    files.forEach( file => {
+      filesList.push( path.join( minYear, file ) );
+    });
+    
+    [ error, files ] = await getFiles( maxMonth + maxDay + '**' + path.sep + '*.jpg', { cwd: path.join( process.env.webcamCache, cameraGUID, maxYear ) })
+    files.forEach( file => {
+      filesList.push( path.join( maxYear, file ) );
+    });
+
+    filesList = filterFiles( minMonth + minDay + minHour, maxMonth + maxDay + maxHour, minFileName, maxFileName, filesList );
+
+    console.log( 'total files', filesList.length );
+
+    await fs.ensureDir( path.join( process.env.webcamCache, cameraGUID, minYear, 'temp' ) );
+
+    const listPath = path.join( process.env.webcamCache, cameraGUID, minYear, 'temp', minMonth + minDay + '.txt' );
+    const movPath  = path.join( process.env.webcamCache, cameraGUID, minYear, 'temp', minMonth + minDay + '.mp4' );
+
+    if( filesList.length < 1 ) {
+      console.log( 'no files' );
+      resolve( false );
+      return;
+    }
+
+    try {
+
+      const txt = fs.createWriteStream( listPath );
+      filesList.sort().forEach( file => {
+        txt.write( "file '" + path.join( process.env.webcamCache, cameraGUID, file ) + "'" + os.EOL );
+      });
+      txt.close();
+
+      await makemp4( movPath, listPath )
+
+      await removeListFile( listPath );
+
+      resolve( true );
+
+    } catch ( processingError ) {
+
+      await removeListFile( listPath );
+      
+      console.error( 'error processing input or output files', os.EOL, processingError );
+
+      resolve( false );
+    }
+
+  });
+}
+
+function removeListFile( listPath ) {
+  return new Promise( async resolve => {
+
+    if( await fs.exists( listPath ) ) {
+      await fs.unlink( listPath );
+    }
+
+    resolve();
+
+  });
+}
 
 ( async() => {
 
-  let filesList = [];
-
-  let error, dawn, dusk, files;
+  let error = false, dawn = '', dusk = '';
 
   [ error, dawn ] = await getTime( 'dawn', 'YYYY MM DD HH mmss' );
   [ error, dusk ] = await getTime( 'dusk', 'YYYY MM DD HH mmss' );
@@ -164,34 +247,15 @@ function makemp4( movPath, listPath ) {
   const [ minYear, minMonth, minDay, minHour, minFileName ] = dawn.split(' ');
   const [ maxYear, maxMonth, maxDay, maxHour, maxFileName ] = dusk.split(' ');
 
-  console.log( 'dawn', path.join( minYear, fixMonth( minMonth ) + minDay + minHour, minFileName ) );
-  console.log( 'dusk', path.join( maxYear, fixMonth( maxMonth ) + maxDay + maxHour, maxFileName ) );
+  console.log( 'dawn', path.join( minYear, minMonth + minDay + minHour, minFileName ) );
+  console.log( 'dusk', path.join( maxYear, maxMonth + maxDay + maxHour, maxFileName ) );
 
-  [ error, files ] = await getFiles( fixMonth( minMonth ) + minDay + '**' + path.sep + '*.jpg', { cwd: path.join( process.env.webcamCache, process.env.cameraGUID, minYear ) })
-  files.forEach( file => {
-    filesList.push( path.join( minYear, file ) );
-  });
-  
-  [ error, files ] = await getFiles( fixMonth( maxMonth ) + maxDay + '**' + path.sep + '*.jpg', { cwd: path.join( process.env.webcamCache, process.env.cameraGUID, maxYear ) })
-  files.forEach( file => {
-    filesList.push( path.join( maxYear, file ) );
-  });
+  const cameraGUIDs = ( process.env.cameraGUIDs || '' ).split(',')
 
-  filesList = filterFiles( fixMonth( minMonth ) + minDay + minHour, fixMonth( maxMonth ) + maxDay + maxHour, minFileName, maxFileName, filesList );
+  for( cameraGUID of cameraGUIDs ) {
+    await processCamera( cameraGUID, dawn, dusk );
+  }
 
-  console.log( 'total files', filesList.length );
-
-  const listPath = path.join( process.env.webcamCache, process.env.cameraGUID, maxYear, 'temp', fixMonth( maxMonth ) + maxDay + '.txt' );
-  const movPath = path.join( process.env.webcamCache, process.env.cameraGUID, maxYear, 'temp', fixMonth( maxMonth ) + maxDay + '.mp4' );
-
-  const txt = fs.createWriteStream( listPath );
-  filesList.sort().forEach( file => {
-    txt.write( "file '" + path.join( process.env.webcamCache, process.env.cameraGUID, file ) + "'\r\n" );
-  });
-  txt.close();
-
-  await makemp4( movPath, listPath )
-
-  console.log( 'done' );
+  console.log('done');
 
 })();
