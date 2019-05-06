@@ -237,25 +237,36 @@ function removeListFile( listPath ) {
   });
 }
 
-( async() => {
+function run() {
+  return new Promise( async resolve => {
 
-  let error = false, dawn = '', dusk = '';
+    let error = false, dawn = '', dusk = '';
+    
+    [ error, dawn ] = await getTime( 'dawn', 'YYYY MM DD HH mmss' );
+    [ error, dusk ] = await getTime( 'dusk', 'YYYY MM DD HH mmss' );
+    
+    const [ minYear, minMonth, minDay, minHour, minFileName ] = dawn.split(' ');
+    const [ maxYear, maxMonth, maxDay, maxHour, maxFileName ] = dusk.split(' ');
+    
+    console.log( 'dawn', path.join( minYear, minMonth + minDay + minHour, minFileName ) );
+    console.log( 'dusk', path.join( maxYear, maxMonth + maxDay + maxHour, maxFileName ) );
+    
+    const cameraGUIDs = ( process.env.cameraGUIDs || '' ).split(',')
+    
+    for( cameraGUID of cameraGUIDs ) {
+      await processCamera( cameraGUID, dawn, dusk );
+    }
+    
+    console.log('done');
 
-  [ error, dawn ] = await getTime( 'dawn', 'YYYY MM DD HH mmss' );
-  [ error, dusk ] = await getTime( 'dusk', 'YYYY MM DD HH mmss' );
+    resolve( true );
+  });
+}
 
-  const [ minYear, minMonth, minDay, minHour, minFileName ] = dawn.split(' ');
-  const [ maxYear, maxMonth, maxDay, maxHour, maxFileName ] = dusk.split(' ');
+// run();
 
-  console.log( 'dawn', path.join( minYear, minMonth + minDay + minHour, minFileName ) );
-  console.log( 'dusk', path.join( maxYear, maxMonth + maxDay + maxHour, maxFileName ) );
+const schedule = require('node-schedule');
 
-  const cameraGUIDs = ( process.env.cameraGUIDs || '' ).split(',')
-
-  for( cameraGUID of cameraGUIDs ) {
-    await processCamera( cameraGUID, dawn, dusk );
-  }
-
-  console.log('done');
-
-})();
+const j = schedule.scheduleJob( '0 0 8-20 * * *', async () => {
+  await run();
+});
